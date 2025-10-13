@@ -1,4 +1,2 @@
 pytelegrambotapi==4.14.0
-SpeechRecognition==3.10.0
-pydub==0.25.1
 requests==2.31.0
