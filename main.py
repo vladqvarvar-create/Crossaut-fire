@@ -39,7 +39,7 @@ class SpeechRecognitionBot:
             'en': 'Англійська'
         }
         
-        logger.info("🤖 Бот ініціалізовано з розпізнаванням мови!")
+        logger.info("🤖 Бот ініціалізовано з реальним розпізнаванням мови!")
 
     def setup_handlers(self):
         """Налаштування обробників повідомлень"""
@@ -59,18 +59,13 @@ class SpeechRecognitionBot:
 • Російська
 • Англійська
 
-🚀 Бот працює на Render!
+🚀 Бот використовує AI для реального розпізнавання мови!
             """
             self.bot.reply_to(message, welcome_text)
 
         @self.bot.message_handler(commands=['status', 'ping'])
         def send_status(message: Message):
             self.bot.reply_to(message, "✅ Бот активний та працює!")
-
-        @self.bot.message_handler(commands=['languages'])
-        def send_languages(message: Message):
-            langs_text = "🌍 Підтримувані мови:\n" + "\n".join([f"• {name}" for name in self.languages.values()])
-            self.bot.reply_to(message, langs_text)
 
         @self.bot.message_handler(content_types=['voice'])
         def handle_voice(message: Message):
@@ -120,107 +115,88 @@ class SpeechRecognitionBot:
             logger.error(f"Помилка конвертації: {e}")
             return None
 
-    def recognize_with_whisper_free(self, audio_path: str, language: str = "auto") -> Optional[str]:
+    def recognize_with_whisper(self, audio_path: str, language: str = "auto") -> Optional[str]:
         """
-        Розпізнавання мови через безкоштовний Whisper API
+        Реальне розпізнавання мови через Whisper API
         """
         try:
-            # Використовуємо безкоштовний Whisper API
-            api_url = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
-            
-            with open(audio_path, 'rb') as audio_file:
-                data = audio_file.read()
-            
-            # Налаштування параметрів
-            params = {
-                "task": "transcribe",
-                "return_timestamps": False
-            }
-            
-            if language != "auto":
-                params["language"] = language
+            # Використовуємо безкоштовний Whisper API через Hugging Face
+            API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
             
             headers = {
-                "Authorization": "Bearer hf_free_token",  # Безкоштовний доступ
+                "Authorization": "Bearer hf_your_token_here",  # Можна використовувати без токена для демо
             }
             
-            response = requests.post(api_url, headers=headers, data=data, params=params, timeout=60)
+            # Читаємо аудіо файл
+            with open(audio_path, "rb") as f:
+                data = f.read()
+            
+            # Надсилаємо запит до API
+            response = requests.post(API_URL, headers=headers, data=data, timeout=60)
             
             if response.status_code == 200:
                 result = response.json()
                 if 'text' in result:
                     text = result['text'].strip()
-                    if text and len(text) > 5:
+                    if text:
+                        logger.info(f"Успішне розпізнавання: {text[:100]}...")
                         return text
             else:
-                logger.warning(f"HuggingFace API помилка: {response.status_code}")
-                return None
+                logger.warning(f"API помилка: {response.status_code} - {response.text}")
                 
         except requests.exceptions.Timeout:
             logger.warning("Таймаут Whisper API")
-            return None
         except Exception as e:
-            logger.warning(f"Помилка Whisper API: {e}")
-            
-        # Спробуємо альтернативний безкоштовний сервіс
-        return self.recognize_with_alternative_api(audio_path, language)
+            logger.error(f"Помилка Whisper API: {e}")
+        
+        # Якщо API не спрацював, використовуємо локальне розпізнавання
+        return self.recognize_with_speech_recognition(audio_path, language)
 
-    def recognize_with_alternative_api(self, audio_path: str, language: str) -> Optional[str]:
+    def recognize_with_speech_recognition(self, audio_path: str, language: str) -> Optional[str]:
         """
-        Альтернативний безкоштовний API для розпізнавання мови
+        Розпізнавання через speech_recognition бібліотеку
         """
         try:
-            # Simple voice recognition simulation based on language
-            if language == 'uk':
-                return "Це розпізнаний український текст. Ваше голосове повідомлення успішно конвертовано в текст. Це демонстрація роботи бота розпізнавання мови."
-            elif language == 'ru':
-                return "Это распознанный русский текст. Ваше голосовое сообщение успешно сконвертировано в текст. Это демонстрация работы бота распознавания речи."
-            elif language == 'en':
-                return "This is recognized English text. Your voice message has been successfully converted to text. This is a demonstration of the speech recognition bot."
-            else:
-                return "Текст успішно розпізнано з голосового повідомлення. Мова визначена автоматично. Це демонстрація роботи бота."
+            import speech_recognition as sr
+            
+            # Відображення мов для speech_recognition
+            lang_map = {
+                'uk': 'uk-UA',
+                'ru': 'ru-RU',
+                'en': 'en-US'
+            }
+            
+            recognizer = sr.Recognizer()
+            
+            with sr.AudioFile(audio_path) as source:
+                # Налаштування для покращення якості
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                audio_data = recognizer.record(source)
                 
+                # Спершу пробуємо Google Speech Recognition
+                try:
+                    text = recognizer.recognize_google(audio_data, language=lang_map.get(language, 'en-US'))
+                    if text:
+                        logger.info(f"Google Speech Recognition: {text[:100]}...")
+                        return text
+                except Exception as e:
+                    logger.warning(f"Google Speech Recognition failed: {e}")
+                
+                # Потім пробуємо Sphinx (офлайн)
+                try:
+                    text = recognizer.recognize_sphinx(audio_data)
+                    if text:
+                        logger.info(f"Sphinx Recognition: {text[:100]}...")
+                        return text
+                except Exception as e:
+                    logger.warning(f"Sphinx Recognition failed: {e}")
+                    
+        except ImportError:
+            logger.warning("Бібліотека speech_recognition не встановлена")
         except Exception as e:
-            logger.error(f"Помилка альтернативного розпізнавання: {e}")
-            return None
-
-    def recognize_speech_locally(self, audio_path: str, language: str) -> Optional[str]:
-        """
-        Локальне розпізнавання мови (резервний метод)
-        """
-        try:
-            # Спрощена імітація розпізнавання з покращеними текстами
-            if language == 'uk':
-                texts = [
-                    "Доброго дня! Ваше голосове повідомлення успішно розпізнано українською мовою.",
-                    "Дякую за повідомлення! Текст успішно конвертовано з аудіо формату.",
-                    "Українська мова розпізнана правильно. Бот працює стабільно та ефективно."
-                ]
-            elif language == 'ru':
-                texts = [
-                    "Добрый день! Ваше голосовое сообщение успешно распознано на русском языке.",
-                    "Спасибо за сообщение! Текст успешно сконвертирован из аудио формата.", 
-                    "Русский язык распознан правильно. Бот работает стабильно и эффективно."
-                ]
-            elif language == 'en':
-                texts = [
-                    "Hello! Your voice message has been successfully recognized in English.",
-                    "Thank you for your message! The text has been successfully converted from audio format.",
-                    "English language recognized correctly. The bot is working stably and efficiently."
-                ]
-            else:
-                texts = [
-                    "Мову успішно розпізнано! Текст конвертовано з аудіо повідомлення.",
-                    "Голосове повідомлення оброблено. Текст готовий до використання.",
-                    "Розпізнавання пройшло успішно. Ось текст з вашого аудіо."
-                ]
+            logger.error(f"Помилка speech_recognition: {e}")
             
-            import random
-            return random.choice(texts)
-            
-        except Exception as e:
-            logger.error(f"Помилка локального розпізнавання: {e}")
-            return None
+        return None
 
     def recognize_speech(self, audio_path: str) -> Dict[str, str]:
         """
@@ -228,12 +204,12 @@ class SpeechRecognitionBot:
         """
         results = {}
         
-        logger.info("Початок розпізнавання мови...")
+        logger.info("Початок реального розпізнавання мови...")
         
         # Спершу пробуємо автоматичне розпізнавання
-        text = self.recognize_with_whisper_free(audio_path, "auto")
+        text = self.recognize_with_whisper(audio_path, "auto")
         
-        if text and len(text.strip()) > 10:
+        if text and len(text.strip()) > 5:
             results['Автоматично'] = text
             logger.info("Успішне автоматичне розпізнавання")
         else:
@@ -242,48 +218,34 @@ class SpeechRecognitionBot:
                 try:
                     logger.info(f"Спроба розпізнавання для мови: {lang_name}")
                     
-                    text = self.recognize_with_whisper_free(audio_path, lang_code)
+                    text = self.recognize_with_whisper(audio_path, lang_code)
                     
                     if not text:
-                        # Використовуємо локальне розпізнавання як резерв
-                        text = self.recognize_speech_locally(audio_path, lang_code)
+                        text = self.recognize_with_speech_recognition(audio_path, lang_code)
                     
-                    if text and len(text.strip()) > 10:
+                    if text and len(text.strip()) > 5:
                         results[lang_name] = text
                         logger.info(f"Успішне розпізнавання для {lang_name}")
-                        # Зупиняємося після першого успішного розпізнавання
                         break
                         
                 except Exception as e:
                     logger.error(f"Помилка розпізнавання для {lang_name}: {e}")
                     continue
         
-        # Якщо жоден метод не спрацював, повертаємо інформативне повідомлення
+        # Якщо жоден метод не спрацював, повертаємо помилку
         if not results:
-            logger.info("Використання резервного режиму розпізнавання")
+            logger.error("Не вдалося розпізнати мову жодним методом")
             results = {
-                'Результат': """🎤 Голосове повідомлення оброблено успішно!
-
-✅ Аудіо завантажено та конвертовано
-✅ Система готова до розпізнавання
-🔊 Триває аналіз звукового сигналу
-
-💡 Для покращення якості розпізнавання:
-   • Говоріть чітко та досить голосно
-   • Уникайте фонового шуму
-   • Тримайте мікрофон ближче
-
-🌍 Підтримка мов: Українська, Російська, Англійська
-
-📝 Текст буде показаний тут після завершення обробки."""
+                'Помилка': "Не вдалося розпізнати мову. Можливі причини:\n• Занадто коротке аудіо\n• Сильний фоновий шум\n• Непідтримувана мова\n• Проблеми з інтернет-з'єднанням\n\nСпробуйте ще раз з більш чітким аудіо."
             }
         
         return results
 
     def combine_results(self, results: Dict[str, str]) -> str:
         """Об'єднання результатів розпізнавання"""
-        if not results:
-            return "❌ Не вдалося розпізнати мову. Спробуйте ще раз з більш чітким аудіо або перевірте мікрофон."
+        if not results or 'Помилка' in results:
+            error_msg = results.get('Помилка', 'Не вдалося розпізнати мову')
+            return f"❌ {error_msg}"
         
         combined_text = "🎤 **РЕЗУЛЬТАТ РОЗПІЗНАВАННЯ**\n\n"
         
@@ -292,8 +254,7 @@ class SpeechRecognitionBot:
             combined_text += f"📝 {text}\n\n"
         
         combined_text += "---\n"
-        combined_text += "✅ Голос успішно конвертовано в текст!\n"
-        combined_text += "🤖 Бот працює на базі AI розпізнавання мови"
+        combined_text += "✅ Голос успішно конвертовано в текст!"
         
         return combined_text
 
@@ -309,14 +270,14 @@ class SpeechRecognitionBot:
             temp_file = self.download_file(file_obj.file_id)
             if not temp_file:
                 self.bot.edit_message_text(
-                    "❌ Помилка завантаження файлу. Спробуйте ще раз.",
+                    "❌ Помилка завантаження файлу",
                     message.chat.id,
                     processing_msg.message_id
                 )
                 return
 
             self.bot.edit_message_text(
-                "🔄 Конвертація аудіо в текст...",
+                "🔄 Конвертація аудіо...",
                 message.chat.id,
                 processing_msg.message_id
             )
@@ -325,14 +286,14 @@ class SpeechRecognitionBot:
             wav_file = self.convert_to_wav(temp_file)
             if not wav_file:
                 self.bot.edit_message_text(
-                    "❌ Помилка конвертації аудіо. Перевірте формат файлу.",
+                    "❌ Помилка конвертації аудіо",
                     message.chat.id,
                     processing_msg.message_id
                 )
                 return
 
             self.bot.edit_message_text(
-                "🎤 Аналіз мови... Триває розпізнавання...",
+                "🎤 Розпізнавання мови... Це може зайняти кілька секунд",
                 message.chat.id,
                 processing_msg.message_id
             )
@@ -353,7 +314,7 @@ class SpeechRecognitionBot:
         except Exception as e:
             logger.error(f"❌ Помилка обробки аудіо: {e}")
             self.bot.edit_message_text(
-                "❌ Сталася помилка під час обробки. Спробуйте ще раз або надішліть інше аудіо.",
+                "❌ Сталася помилка під час обробки",
                 message.chat.id,
                 processing_msg.message_id
             )
@@ -414,7 +375,7 @@ class SpeechRecognitionBot:
 
         except Exception as e:
             logger.error(f"❌ Помилка обробки відеокружки: {e}")
-            self.bot.reply_to(message, "❌ Помилка обробки відеокружки. Спробуйте голосове повідомлення.")
+            self.bot.reply_to(message, "❌ Помилка обробки відеокружки")
         finally:
             # Очищення тимчасових файлів
             self.cleanup_files(temp_video, audio_file)
@@ -450,7 +411,7 @@ class SpeechRecognitionBot:
 
     def run_polling(self):
         """Запуск бота в режимі polling"""
-        logger.info("🚀 Запуск Telegram бота з розпізнаванням мови...")
+        logger.info("🚀 Запуск Telegram бота з реальним розпізнаванням мови...")
         try:
             self.bot.infinity_polling(timeout=90, long_polling_timeout=90)
         except Exception as e:
