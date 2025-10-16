@@ -64,16 +64,28 @@ class SpeechRecognitionBot:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 return output_path
+            else:
+                logger.error(f"FFmpeg помилка: {result.stderr}")
+                return None
         except Exception as e:
             logger.error(f"Помилка конвертації: {e}")
-        return None
+            return None
 
     def recognize_with_whisper_api(self, audio_path: str) -> Optional[str]:
         """Реальне розпізнавання через Whisper API"""
         try:
+            if not self.whisper_token:
+                logger.warning("❌ Whisper токен не вказано")
+                return None
+
             API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
             
-            headers = {"Authorization": f"Bearer {self.whisper_token}"} if self.whisper_token else {}
+            headers = {"Authorization": f"Bearer {self.whisper_token}"}
+            
+            # Перевіряємо чи файл існує і не порожній
+            if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+                logger.error("❌ Аудіо файл не існує або порожній")
+                return None
             
             with open(audio_path, "rb") as f:
                 data = f.read()
@@ -86,8 +98,8 @@ class SpeechRecognitionBot:
             if response.status_code == 200:
                 result = response.json()
                 text = result.get('text', '').strip()
-                if text and len(text) > 5:
-                    logger.info(f"✅ Whisper успішно розпізнав текст")
+                if text and len(text) > 1:  # Зменшимо мінімальну довжину тексту
+                    logger.info(f"✅ Whisper успішно розпізнав текст: {text[:50]}...")
                     return text
                 else:
                     logger.warning("❌ Whisper повернув порожній текст")
@@ -134,6 +146,12 @@ class SpeechRecognitionBot:
         audio_info = self.get_audio_info(audio_path)
         logger.info(f"📊 Аудіо: {audio_info['duration']:.1f}с, {audio_info['sample_rate']}Hz")
         
+        # Перевіряємо тривалість аудіо
+        if audio_info['duration'] < 0.5:
+            return {
+                'Помилка': "❌ Аудіо занадто коротке (менше 0.5 секунди)"
+            }
+        
         # 1. Спроба Whisper API
         if self.whisper_token:
             text = self.recognize_with_whisper_api(audio_path)
@@ -154,6 +172,7 @@ class SpeechRecognitionBot:
 • Whisper API тимчасово недоступний
 • Модель завантажується (зачекайте 20-30 сек)
 • Проблеми з інтернет-з'єднанням
+• Аудіо занадто коротке або тихе
 
 🔄 Спробуйте ще раз через декілька хвилин."""
             }
