@@ -5,11 +5,9 @@ import subprocess
 import requests
 import json
 import wave
-import math
 from typing import Optional, Dict
 import telebot
 from telebot.types import Message, Voice, Audio, VideoNote
-from flask import Flask
 
 # Налаштування логування
 logging.basicConfig(
@@ -18,33 +16,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Telegram Speech Recognition Bot is running!"
-
 class SpeechRecognitionBot:
     def __init__(self, token: str):
         self.bot = telebot.TeleBot(token)
         self.setup_handlers()
         
-        self.languages = {
-            'uk': 'Українська',
-            'ru': 'Російська', 
-            'en': 'Англійська'
-        }
-        
-        # Токен для Whisper
         self.whisper_token = os.getenv('HUGGINGFACE_TOKEN', '')
-        
         logger.info("🤖 Бот ініціалізовано!")
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start', 'help'])
         def send_welcome(message: Message):
             welcome_text = """
-🎤 Бот для розпізнавання голосових повідомлень
+🎤 Бот для РЕАЛЬНОГО розпізнавання голосу
 
 📌 Надсилайте голосові повідомлення
 🌍 Мови: Українська, Російська, Англійська
@@ -84,14 +68,12 @@ class SpeechRecognitionBot:
             logger.error(f"Помилка конвертації: {e}")
         return None
 
-    def recognize_with_whisper(self, audio_path: str) -> Optional[str]:
-        """Розпізнавання через Whisper API"""
+    def recognize_with_whisper_api(self, audio_path: str) -> Optional[str]:
+        """Реальне розпізнавання через Whisper API"""
         try:
             API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
             
-            headers = {}
-            if self.whisper_token:
-                headers["Authorization"] = f"Bearer {self.whisper_token}"
+            headers = {"Authorization": f"Bearer {self.whisper_token}"} if self.whisper_token else {}
             
             with open(audio_path, "rb") as f:
                 data = f.read()
@@ -99,87 +81,105 @@ class SpeechRecognitionBot:
             logger.info("📡 Надсилання до Whisper API...")
             response = requests.post(API_URL, headers=headers, data=data, timeout=60)
             
-            logger.info(f"🔔 Whisper відповідь: {response.status_code}")
+            logger.info(f"🔔 Whisper статус: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
                 text = result.get('text', '').strip()
-                if text:
-                    logger.info(f"✅ Whisper розпізнав: {text[:100]}...")
+                if text and len(text) > 5:
+                    logger.info(f"✅ Whisper успішно розпізнав текст")
                     return text
+                else:
+                    logger.warning("❌ Whisper повернув порожній текст")
+                    return None
+                    
             elif response.status_code == 503:
                 # Модель завантажується
-                logger.warning("⏳ Whisper модель завантажується...")
-                return "Модель Whisper завантажується. Спробуйте через 20-30 секунд."
+                error_info = response.json().get('error', '')
+                logger.warning(f"⏳ Модель завантажується: {error_info}")
+                return None
+                
             else:
-                error_text = response.text[:200] if response.text else "Немає деталей"
+                error_text = response.text[:500] if response.text else "Немає деталей"
                 logger.error(f"❌ Whisper помилка {response.status_code}: {error_text}")
+                return None
                 
         except Exception as e:
-            logger.error(f"❌ Whisper помилка: {e}")
-        
-        return None
+            logger.error(f"❌ Помилка запиту до Whisper: {e}")
+            return None
 
-    def recognize_with_fallback(self, audio_path: str) -> str:
-        """Резервне розпізнавання з аналізом аудіо"""
+    def get_audio_info(self, audio_path: str) -> Dict[str, any]:
+        """Отримання інформації про аудіо"""
         try:
-            # Аналізуємо аудіо файл
             with wave.open(audio_path, 'rb') as wav_file:
                 frames = wav_file.getnframes()
                 rate = wav_file.getframerate()
                 duration = frames / float(rate)
-            
-            # Генеруємо реалістичний текст на основі тривалості
-            words_per_minute = 150
-            estimated_words = max(1, int((duration * words_per_minute) / 60))
-            
-            # Тексти для різних мов
-            sample_texts = [
-                "Доброго дня це демонстрація роботи бота розпізнавання мови",
-                "Дуже дякую за ваше повідомлення я уважно його прослухав",
-                "Зараз я тестую функціонал розпізнавання голосових повідомлень",
-                "Це дуже цікава технологія яка полегшує спілкування",
-                "Ваше голосове повідомлення успішно конвертовано в текст"
-            ]
-            
-            import random
-            base_text = random.choice(sample_texts)
-            words = base_text.split()
-            adjusted_text = ' '.join(words[:min(len(words), estimated_words)])
-            
-            return f"🔊 Тривалість: {duration:.1f}с\n📝 Текст: {adjusted_text}"
-            
+                
+                return {
+                    'duration': duration,
+                    'sample_rate': rate,
+                    'channels': wav_file.getnchannels(),
+                    'frames': frames
+                }
         except Exception as e:
-            logger.error(f"Помилка fallback: {e}")
-            return "✅ Аудіо оброблено успішно! Whisper API тимчасово недоступний."
+            logger.error(f"Помилка аналізу аудіо: {e}")
+            return {'duration': 0, 'sample_rate': 0, 'channels': 0, 'frames': 0}
 
     def recognize_speech(self, audio_path: str) -> Dict[str, str]:
         """Основна функція розпізнавання"""
-        results = {}
+        logger.info("🔍 Початок реального розпізнавання...")
         
-        logger.info("🔍 Початок розпізнавання...")
+        # Отримуємо інформацію про аудіо
+        audio_info = self.get_audio_info(audio_path)
+        logger.info(f"📊 Аудіо: {audio_info['duration']:.1f}с, {audio_info['sample_rate']}Hz")
         
-        # 1. Спершу пробуємо Whisper
-        text = self.recognize_with_whisper(audio_path)
+        # 1. Спроба Whisper API
+        if self.whisper_token:
+            text = self.recognize_with_whisper_api(audio_path)
+            if text:
+                return {'Whisper AI': text}
         
-        if text and "модель завантажується" not in text.lower():
-            results['Whisper AI'] = text
+        # 2. Якщо Whisper не спрацював
+        if audio_info['duration'] > 0:
+            return {
+                'Інформація': f"""🔊 Аудіо аналіз:
+• Тривалість: {audio_info['duration']:.1f} секунд
+• Частота: {audio_info['sample_rate']} Hz
+• Канали: {audio_info['channels']}
+
+❌ Не вдалося розпізнати мову.
+
+💡 Можливі причини:
+• Whisper API тимчасово недоступний
+• Модель завантажується (зачекайте 20-30 сек)
+• Проблеми з інтернет-з'єднанням
+
+🔄 Спробуйте ще раз через декілька хвилин."""
+            }
         else:
-            # 2. Якщо Whisper не працює, використовуємо fallback
-            fallback_text = self.recognize_with_fallback(audio_path)
-            results['Результат'] = fallback_text
-        
-        return results
+            return {
+                'Помилка': "❌ Не вдалося обробити аудіо файл. Спробуйте інше голосове повідомлення."
+            }
 
     def combine_results(self, results: Dict[str, str]) -> str:
         if not results:
             return "❌ Не вдалося обробити аудіо."
         
-        combined_text = "🎤 **РЕЗУЛЬТАТ:**\n\n"
+        if 'Помилка' in results:
+            return results['Помилка']
+            
+        if 'Інформація' in results:
+            return results['Інформація']
+        
+        # Реальний розпізнаний текст
+        combined_text = "🎤 **ТЕКСТ РОЗПІЗНАНО З ГОЛОСУ:**\n\n"
         
         for service, text in results.items():
-            combined_text += f"**{service}:**\n{text}\n\n"
+            combined_text += f"**{service}:**\n"
+            combined_text += f"{text}\n\n"
         
+        combined_text += "✅ Голос успішно конвертовано в текст!"
         return combined_text
 
     def process_audio_message(self, message: Message, file_obj):
@@ -208,7 +208,7 @@ class SpeechRecognitionBot:
 
             # Результат
             self.bot.edit_message_text(combined_text, message.chat.id, processing_msg.message_id)
-            logger.info("✅ Успішно оброблено")
+            logger.info("✅ Обробка завершена")
 
         except Exception as e:
             logger.error(f"❌ Помилка: {e}")
@@ -224,7 +224,8 @@ class SpeechRecognitionBot:
             except Exception as e:
                 logger.error(f"Помилка видалення: {e}")
 
-    def run_polling(self):
+    def run(self):
+        """Запуск бота без Flask"""
         logger.info("🚀 Запуск бота...")
         try:
             self.bot.infinity_polling(timeout=90, long_polling_timeout=90)
@@ -232,26 +233,24 @@ class SpeechRecognitionBot:
             logger.error(f"Помилка: {e}")
             import time
             time.sleep(10)
-            self.run_polling()
+            logger.info("🔄 Перезапуск бота...")
+            self.run()
 
-def start_bot():
+def main():
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
-        logger.error("❌ Немає токену")
-        return None
+        logger.error("❌ Немає TELEGRAM_BOT_TOKEN")
+        return
 
-    logger.info("✅ Запуск бота...")
-    return SpeechRecognitionBot(token)
+    # Перевіряємо токен Whisper
+    whisper_token = os.getenv('HUGGINGFACE_TOKEN', '')
+    if whisper_token:
+        logger.info("✅ Whisper токен знайдено")
+    else:
+        logger.warning("⚠️ Whisper токен не вказано, розпізнавання може не працювати")
+
+    bot = SpeechRecognitionBot(token)
+    bot.run()
 
 if __name__ == '__main__':
-    bot_instance = start_bot()
-    if bot_instance:
-        port = int(os.environ.get('PORT', 10000))
-        logger.info(f"🌐 Порт: {port}")
-        
-        import threading
-        bot_thread = threading.Thread(target=bot_instance.run_polling)
-        bot_thread.daemon = True
-        bot_thread.start()
-        
-        app.run(host='0.0.0.0', port=port, debug=False)
+    main()
