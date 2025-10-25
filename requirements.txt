@@ -1,2 +1,9 @@
-pyTelegramBotAPI==4.19.1
+python-telegram-bot==20.7
+SpeechRecognition==3.10.0
+pydub==0.25.1
+ffmpeg-python==0.2.0
 requests==2.31.0
+pytube==15.0.0
+moviepy==1.0.3
+langdetect==1.0.9
+googletrans==4.0.0-rc1
